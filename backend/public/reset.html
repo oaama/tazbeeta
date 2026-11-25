@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Set your password</title>
+<style>body{font-family:system-ui,sans-serif;background:#f6f8fa;margin:0}.c{max-width:380px;margin:60px auto;background:#fff;border:1px solid #e6eaf0;border-radius:12px;padding:20px}input,button{font:inherit;padding:12px;border-radius:10px;border:1px solid #e6eaf0;width:100%;margin-top:10px;box-sizing:border-box}button{background:#1B96C2;color:#fff;border:0}.e{color:#d93025}.ok{color:#22a745}</style></head><body><div class="c"><h3>Set your password</h3><p>At least 8 characters.</p><input id="p" type="password" placeholder="New password" autocomplete="new-password"><input id="q" type="password" placeholder="Repeat password" autocomplete="new-password"><p id="m"></p><button id="go">Save password</button></div>
+<script>
+// Supabase recovery links return here with the session in the URL hash (#access_token=...). Used once, then cleared from the address bar.
+const h=new URLSearchParams(location.hash.slice(1));const tok=h.get('access_token');history.replaceState(null,'',location.pathname);
+const m=document.getElementById('m');if(!tok){m.className='e';m.textContent='This link is invalid or expired. Ask for a new one.'}
+document.getElementById('go').onclick=async()=>{const p=document.getElementById('p').value;if(p.length<8){m.className='e';m.textContent='At least 8 characters';return}if(p!==document.getElementById('q').value){m.className='e';m.textContent='Passwords do not match';return}
+const c=await (await fetch('/api/config')).json();
+const r=await fetch(c.supabaseUrl+'/auth/v1/user',{method:'PUT',headers:{'content-type':'application/json',apikey:c.supabaseAnonKey,authorization:'Bearer '+tok},body:JSON.stringify({password:p})});const j=await r.json().catch(()=>({}));
+if(r.ok){m.className='ok';m.textContent='Password saved. You can now sign in to the app.'}else{m.className='e';m.textContent=j.msg||j.error_description||'Could not save the password'}}
+</script></body></html>

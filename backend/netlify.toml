@@ -1,0 +1,13 @@
+[build]
+  publish = "public"
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["handler.js", "lib.js"]
+[[redirects]]
+  from = "/admin"
+  to = "/admin.html"
+  status = 200
+[[redirects]]
+  from = "/reset"
+  to = "/reset.html"
+  status = 200
