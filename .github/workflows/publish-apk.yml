@@ -1,0 +1,29 @@
+name: Publish APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: apk-arm64-v8a }
+      - name: Reassemble APK
+        run: |
+          cat p_*.txt | base64 -d > /tmp/tazbeeta.apk
+          ls -la /tmp/tazbeeta.apk
+          echo "expected:"; cat sha.txt
+          echo "actual:"; sha256sum /tmp/tazbeeta.apk
+      - name: Upload APK to free hosts
+        run: |
+          echo "=== 0x0.st ==="
+          curl -sS -F "file=@/tmp/tazbeeta.apk" https://0x0.st || true
+          echo ""
+          echo "=== transfer.sh ==="
+          curl -sS --upload-file /tmp/tazbeeta.apk https://transfer.sh/tazbeeta.apk || true
+          echo ""
+          echo "=== tmpfiles ==="
+          curl -sS -F "file=@/tmp/tazbeeta.apk" https://tmpfiles.org/api/v1/upload || true
+          echo ""
