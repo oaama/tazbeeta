@@ -1,0 +1,22 @@
+name: Publish browsable project source
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/3-sync-source.yml']
+permissions:
+  contents: write
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expand 0.7.3 password reset requests and phone
+        run: |
+          ls *.tgz
+          tar xzf *Tazbeeta-073-patch.tgz
+          git config user.name ci
+          git config user.email ci@users.noreply.github.com
+          git rm -f *Tazbeeta-073-patch.tgz
+          git add mobile
+          git commit -m "0.7.3: password reset requests, phone at signup [skip ci]"
+          git push origin HEAD:main
