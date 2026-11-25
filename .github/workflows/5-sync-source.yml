@@ -1,0 +1,10 @@
+name: Legacy source sync (disabled)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  notice:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Legacy archive sync is disabled. Current source is already in mobile, backend and docs. Do not restore old archives.'
