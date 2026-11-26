@@ -274,6 +274,14 @@ const _ar = <String, String>{
   'Preview only. No reset email will be sent.':
       'للمعاينة فقط. لن يتم إرسال بريد لاستعادة كلمة المرور.',
   'Enter the email address you used to register.': 'اكتب البريد اللي سجلت بيه.',
+  'Verify your email': 'تأكيد البريد الإلكتروني',
+  'Verification code': 'كود التأكيد',
+  'Verify': 'تأكيد',
+  'Resend code': 'إعادة إرسال الكود',
+  'We sent a 6-digit code to': 'بعتنالك كود من 6 أرقام على',
+  'Check your inbox and spam folder. The code works for 15 minutes.':
+      'شوف الوارد والسبام. الكود شغال 15 دقيقة.',
+  'A new code was sent.': 'اتبعت كود جديد.',
   'Address': 'العنوان',
   'Address (or share location)': 'العنوان أو شارك موقعك',
   'Message': 'رسالة',
@@ -532,7 +540,13 @@ String trErr(String e) {
       s.contains('invalid credentials') ||
       s.contains('wrong email or password'))
     return 'البريد أو كلمة المرور غير صحيحة';
-  if (s.contains('not confirmed')) return 'أكّد بريدك الإلكتروني الأول';
+  if (s.contains('not confirmed') || s.contains('not verified'))
+    return 'أكّد بريدك الإلكتروني الأول';
+  if (s.contains('code is wrong')) return 'الكود غلط أو انتهى، اطلب كود جديد';
+  if (s.contains('enter the 6-digit')) return 'اكتب الكود المكوّن من 6 أرقام';
+  if (s.contains('wait a moment')) return 'استنى شوية قبل ما تطلب كود تاني';
+  if (s.contains('could not send the email'))
+    return 'مقدرناش نبعت الإيميل، جرّب تاني';
   if (s.contains('already registered') ||
       s.contains('already exists') ||
       s.contains('already has an account'))

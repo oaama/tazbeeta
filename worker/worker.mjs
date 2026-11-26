@@ -207,11 +207,11 @@ var require_lib = __commonJS({
       const cr = await get("creds", c.sub);
       return (cr ? cr.hash.slice(0, 10) : "none") === c.pv ? c.sub : null;
     }
-    async function throttled(email) {
+    async function throttled(email, max = 8) {
       const r = await DB.prepare("SELECT doc FROM docs WHERE c = ? AND id = ?").bind("throttle", email).first();
       if (!r) return false;
       const d = parse(r);
-      return d.count >= 8 && Date.now() - d.last < 15 * 6e4;
+      return d.count >= max && Date.now() - d.last < 15 * 6e4;
     }
     async function recordFailure(email) {
       const r = await DB.prepare("SELECT doc FROM docs WHERE c = ? AND id = ?").bind("throttle", email).first();
@@ -250,6 +250,7 @@ var require_handler = __commonJS({
       const u = await L2.get("users", c.sub);
       if (!u) throw new HttpError(401, "Unauthorized");
       if (u.blocked) throw new HttpError(403, "Account blocked");
+      if (u.verified === false) throw new HttpError(403, "Email not verified");
       return u;
     }
     var needAdmin = async (req) => {
@@ -262,18 +263,93 @@ var require_handler = __commonJS({
     route("GET", "/api/health", async () => ({ ok: true }));
     route("GET", "/api/config", async () => ({ auth: "builtin" }));
     var pwOk = (p) => typeof p === "string" && p.length >= 8 && p.length <= 200;
+    var vEnv = () => globalThis.process && globalThis.process.env || {};
+    async function gmailSend(to, subject, text, html) {
+      const e = vEnv();
+      if (!e.GMAIL_CLIENT_ID || !e.GMAIL_CLIENT_SECRET || !e.GMAIL_REFRESH_TOKEN) throw new HttpError(503, "Email is not configured");
+      const tr = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: e.GMAIL_CLIENT_ID, client_secret: e.GMAIL_CLIENT_SECRET, refresh_token: e.GMAIL_REFRESH_TOKEN, grant_type: "refresh_token" }) });
+      const tj = await tr.json().catch(() => ({}));
+      if (!tj.access_token) throw new HttpError(502, "Could not send the email. Try again.");
+      const b64 = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str)));
+      const b64w = (str) => b64(str).replace(/.{76}/g, "$&\r\n");
+      const bnd = "tzb" + Date.now().toString(36);
+      const from = e.GMAIL_FROM || "Tazbeeta";
+      const raw = ["From: =?UTF-8?B?" + b64(from) + "?= <" + (e.GMAIL_SENDER || "") + ">", "To: " + to, "Subject: =?UTF-8?B?" + b64(subject) + "?=", "MIME-Version: 1.0", "Content-Type: multipart/alternative; boundary=" + bnd, "", "--" + bnd, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", "", b64w(text), "--" + bnd, "Content-Type: text/html; charset=UTF-8", "Content-Transfer-Encoding: base64", "", b64w(html), "--" + bnd + "--", ""].join("\r\n");
+      const rawU = btoa(String.fromCharCode(...new TextEncoder().encode(raw))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const gr = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", { method: "POST", headers: { authorization: "Bearer " + tj.access_token, "content-type": "application/json" }, body: JSON.stringify({ raw: rawU }) });
+      if (!gr.ok) throw new HttpError(502, "Could not send the email. Try again.");
+    }
+    var codeHash = async (uid, code) => {
+      const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(uid + ":" + code + ":" + vEnv().JWT_SECRET));
+      return Array.from(new Uint8Array(d), (x) => x.toString(16).padStart(2, "0")).join("");
+    };
+    async function issueCode(u) {
+      const buf = new Uint32Array(1);
+      crypto.getRandomValues(buf);
+      const code = String(buf[0] % 1e6).padStart(6, "0");
+      await L2.clearFailures("vt:" + u.id);
+      await L2.put("emailcodes", { id: u.id, hash: await codeHash(u.id, code), exp: Date.now() + 15 * 6e4, tries: 0, sentAt: Date.now() });
+      const name = u.firstName || "";
+      const text = "Tazbeeta\n\nHi " + name + ",\nYour verification code is: " + code + "\nIt expires in 15 minutes. If you did not create an account, ignore this email.\n\n\u0643\u0648\u062f \u0627\u0644\u062a\u0641\u0639\u064a\u0644: " + code;
+      const html = '<div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;padding:24px;color:#222"><h2 style="margin:0 0 16px">Tazbeeta</h2><p>Hi ' + name.replace(/[<>&]/g, "") + ',</p><p>Your verification code is:</p><p style="font-size:32px;letter-spacing:6px;font-weight:bold;margin:16px 0">' + code + '</p><p>This code expires in 15 minutes. If you did not create an account, you can ignore this email.</p><p dir="rtl" style="color:#555">\u0643\u0648\u062f \u0627\u0644\u062a\u0641\u0639\u064a\u0644 \u0627\u0644\u062e\u0627\u0635 \u0628\u0643: <b>' + code + '</b></p></div>';
+      await gmailSend(u.email, "Your Tazbeeta verification code", text, html);
+    }
     route("POST", "/api/auth/signup", async ({ body }) => {
       const email = String(body.email || "").trim().toLowerCase();
       if (!EMAIL.test(email) || email.length > 120) throw bad("Enter a valid email");
       if (!pwOk(body.password)) throw bad("Password must be 8 to 200 characters");
       const fn = String(body.firstName || "").trim(), ln = String(body.lastName || "").trim();
       if (!fn || fn.length > 60 || ln.length > 60) throw bad("Enter your name");
-      if ((await L2.all("users")).some((u2) => u2.email === email)) throw new HttpError(409, "This email already has an account");
       const ph = String(body.phone || "").trim();
       if (ph && !/^[+0-9 ()-]{7,30}$/.test(ph)) throw bad("Enter a valid phone number");
+      const verify = body.verify === true || vEnv().REQUIRE_VERIFY === "1";
+      const existing = (await L2.all("users")).find((u2) => u2.email === email);
+      if (existing && !(verify && existing.verified === false && existing.role === "customer")) throw new HttpError(409, "This email already has an account");
+      if (verify) {
+        if (await L2.throttled("vs:" + email)) throw new HttpError(429, "Too many attempts. Try again in 15 minutes");
+        await L2.recordFailure("vs:" + email);
+        const base = existing || { id: L2.id(), role: "customer", createdAt: (/* @__PURE__ */ new Date()).toISOString(), addresses: [] };
+        const u2 = await L2.put("users", { ...base, firstName: fn, lastName: ln, email, phone: ph, verified: false });
+        await L2.setPassword(u2.id, body.password);
+        await issueCode(u2);
+        return { needsVerification: true, email };
+      }
       const u = await L2.put("users", { id: L2.id(), firstName: fn, lastName: ln, email, phone: ph, role: "customer", createdAt: (/* @__PURE__ */ new Date()).toISOString(), addresses: [] });
       await L2.setPassword(u.id, body.password);
       return { token: await L2.signToken(u), user: L2.publicUser(u) };
+    });
+    route("POST", "/api/auth/verify-email", async ({ body }) => {
+      const email = String(body.email || "").trim().toLowerCase();
+      const code = String(body.code || "").trim();
+      if (!EMAIL.test(email) || !/^\d{6}$/.test(code)) throw bad("Enter the 6-digit code");
+      if (await L2.throttled("vc:" + email)) throw new HttpError(429, "Too many attempts. Try again in 15 minutes");
+      const u = (await L2.all("users")).find((x) => x.email === email);
+      const rec = u && await L2.get("emailcodes", u.id);
+      const wrong = () => bad("The code is wrong or expired. Request a new one.");
+      if (!u || u.verified !== false || !rec) { await L2.recordFailure("vc:" + email); throw wrong(); }
+      if (rec.exp < Date.now() || await L2.throttled("vt:" + u.id, 5)) throw wrong();
+      if ((await codeHash(u.id, code)) !== rec.hash) {
+        await L2.recordFailure("vt:" + u.id);
+        await L2.recordFailure("vc:" + email);
+        throw wrong();
+      }
+      const u2 = await L2.put("users", { ...u, verified: true });
+      await L2.del("emailcodes", u.id);
+      await L2.clearFailures("vc:" + email);
+      return { token: await L2.signToken(u2), user: L2.publicUser(u2) };
+    });
+    route("POST", "/api/auth/resend-code", async ({ body }) => {
+      const email = String(body.email || "").trim().toLowerCase();
+      if (!EMAIL.test(email) || email.length > 120) throw bad("Enter a valid email");
+      if (await L2.throttled("vr:" + email)) throw new HttpError(429, "Too many attempts. Try again in 15 minutes");
+      await L2.recordFailure("vr:" + email);
+      const u = (await L2.all("users")).find((x) => x.email === email);
+      if (u && u.verified === false) {
+        const rec = await L2.get("emailcodes", u.id);
+        if (rec && Date.now() - rec.sentAt < 45e3) throw new HttpError(429, "Wait a moment before asking for another code");
+        await issueCode(u);
+      }
+      return { ok: true };
     });
     route("POST", "/api/auth/login", async ({ body }) => {
       const email = String(body.email || "").trim().toLowerCase();
@@ -285,6 +361,7 @@ var require_handler = __commonJS({
         throw new HttpError(401, "Wrong email or password");
       }
       if (u.blocked) throw new HttpError(403, "Account blocked");
+      if (u.verified === false) throw new HttpError(403, "Email not verified");
       await L2.clearFailures(email);
       return { token: await L2.signToken(u), user: L2.publicUser(u) };
     });
@@ -1330,7 +1407,7 @@ var worker_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
     globalThis.process = globalThis.process || { env: {} };
-    for (const k of ["JWT_SECRET", "ADMIN_EMAIL", "SITE_URL", "PBKDF2_ITER", "MAX_LOCATION_AGE_MIN", "BOT_KEY"]) if (typeof env[k] === "string") process.env[k] = env[k];
+    for (const k of ["JWT_SECRET", "ADMIN_EMAIL", "SITE_URL", "PBKDF2_ITER", "MAX_LOCATION_AGE_MIN", "BOT_KEY", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER", "GMAIL_FROM", "REQUIRE_VERIFY"]) if (typeof env[k] === "string") process.env[k] = env[k];
     if (!process.env.SITE_URL) process.env.SITE_URL = url.origin;
     if (url.pathname.startsWith("/api/")) {
       L.bind(env.DB);

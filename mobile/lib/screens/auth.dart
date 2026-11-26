@@ -81,10 +81,14 @@ class _SignupState extends State<SignupScreen> {
       });
       if (!mounted) return;
       if (!signedIn) {
-        setState(() {
-          error = 'Account created. Confirm your email address, then log in.';
-          busy = false;
-        });
+        setState(() => busy = false);
+        Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+                builder: (_) => VerifyCodeScreen(
+                    email: em.text.trim(),
+                    next: (_) => const LocationScreen())),
+            (_) => false);
         return;
       }
       Navigator.pushAndRemoveUntil(
@@ -274,6 +278,20 @@ class _LoginState extends State<LoginScreen> {
               builder: (_) => const HomeShell()),
           (_) => false);
     } on ApiError catch (e) {
+      if (e.code == 403 && e.message == 'Email not verified') {
+        try {
+          await Api.resendCode(em.text.trim());
+        } on ApiError catch (_) {}
+        if (!mounted) return;
+        setState(() => busy = false);
+        Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => VerifyCodeScreen(
+                    email: em.text.trim(),
+                    next: (_) => const HomeShell())));
+        return;
+      }
       setState(() {
         error = e.code == 401 ? 'Something went wrong' : e.message;
         busy = false;
@@ -452,6 +470,91 @@ class TermsScreen extends StatelessWidget {
                                 : 'Could not load the terms. Try again.')
                             : txt)));
           },
+        ),
+      );
+}
+
+
+/// Asks for the 6-digit code emailed after sign-up, then signs the user in.
+class VerifyCodeScreen extends StatefulWidget {
+  final String email;
+  final WidgetBuilder next;
+  const VerifyCodeScreen({super.key, required this.email, required this.next});
+  @override
+  State<VerifyCodeScreen> createState() => _VerifyCodeState();
+}
+
+class _VerifyCodeState extends State<VerifyCodeScreen> {
+  final code = TextEditingController();
+  bool busy = false;
+  String? error, info;
+  DateTime lastSent = DateTime.now();
+
+  Future<void> go() async {
+    setState(() {
+      busy = true;
+      error = null;
+      info = null;
+    });
+    try {
+      await Api.verifyEmail(widget.email, code.text.trim());
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+          context, MaterialPageRoute(builder: widget.next), (_) => false);
+    } on ApiError catch (e) {
+      setState(() {
+        error = e.message;
+        busy = false;
+      });
+    }
+  }
+
+  Future<void> resend() async {
+    setState(() {
+      error = null;
+      info = null;
+    });
+    try {
+      await Api.resendCode(widget.email);
+      setState(() => info = 'A new code was sent.');
+    } on ApiError catch (e) {
+      setState(() => error = e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(
+            title: const Text('Verify your email'), leading: const BackButton()),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: ListView(children: [
+              const SizedBox(height: 16),
+              const Text('We sent a 6-digit code to'),
+              const SizedBox(height: 4),
+              Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Text(widget.email,
+                      style: const TextStyle(fontWeight: FontWeight.w700))),
+              const SizedBox(height: 8),
+              const Hint(
+                  'Check your inbox and spam folder. The code works for 15 minutes.'),
+              const SizedBox(height: 16),
+              AppField('Verification code', code,
+                  keyboard: TextInputType.number,
+                  onChanged: (_) => setState(() {})),
+              if (error != null) ErrText(error!),
+              if (info != null) Hint(info!),
+              const SizedBox(height: 18),
+              PrimaryButton('Verify',
+                  onTap: RegExp(r'^\d{6}$').hasMatch(code.text.trim())
+                      ? go
+                      : null,
+                  busy: busy),
+              TextButton(onPressed: resend, child: const Text('Resend code')),
+            ]),
+          ),
         ),
       );
 }

@@ -142,9 +142,22 @@ class Api {
       'firstName': b['firstName'],
       'lastName': b['lastName'],
       'phone': b['phone'],
+      'verify': true,
     });
+    if (j['needsVerification'] == true) return false;
     await _finish({'access_token': j['token']});
     return true;
+  }
+
+  /// Confirms the 6-digit code emailed at sign-up and signs the user in.
+  static Future<void> verifyEmail(String email, String code) async {
+    final j = await _call(
+        'POST', '/api/auth/verify-email', {'email': email, 'code': code});
+    await _finish({'access_token': j['token']});
+  }
+
+  static Future<void> resendCode(String email) async {
+    await _call('POST', '/api/auth/resend-code', {'email': email});
   }
 
   static Future<void> login(String email, String pw) async {
