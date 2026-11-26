@@ -528,11 +528,15 @@ class LangSwitch extends StatelessWidget {
 String trErr(String e) {
   if (!Lang.ar) return e;
   final s = e.toLowerCase();
-  if (s.contains('invalid login') || s.contains('invalid credentials'))
+  if (s.contains('invalid login') ||
+      s.contains('invalid credentials') ||
+      s.contains('wrong email or password'))
     return 'البريد أو كلمة المرور غير صحيحة';
   if (s.contains('not confirmed')) return 'أكّد بريدك الإلكتروني الأول';
-  if (s.contains('already registered') || s.contains('already exists'))
-    return 'البريد ده متسجّل قبل كده';
+  if (s.contains('already registered') ||
+      s.contains('already exists') ||
+      s.contains('already has an account'))
+    return 'البريد ده متسجّل قبل كده، سجّل دخول بيه';
   if (s.contains('rate limit') || s.contains('too many'))
     return 'محاولات كتير، جرّب بعد شوية';
   if (s.contains('socket') ||
