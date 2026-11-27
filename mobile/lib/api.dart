@@ -282,6 +282,8 @@ class Api {
     await _save();
   }
 
+  static Future<void> deleteAccount(String password) async =>
+      _call('POST', '/api/me/delete', {'password': password});
   static Future<void> registerDevice(String token) async =>
       _call('POST', '/api/devices', {'token': token});
   static Future<List<dynamic>> conversations() async =>

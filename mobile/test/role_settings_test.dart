@@ -47,7 +47,8 @@ void main() {
       await shot(t, 'role_${lang}_worker_settings');
       await t.tap(find.byType(BackButton));
       await settle(t);
-      await t.ensureVisible(find.text(tr('Log out')));
+      t.view.physicalSize = const Size(800, 3000);
+      await t.pump(const Duration(milliseconds: 300));
       await t.tap(find.text(tr('Log out')));
       await settle(t);
       expect(find.byType(OnboardingScreen), findsOneWidget);

@@ -1703,6 +1703,51 @@ class MoreTab extends StatelessWidget {
           await launchUrl(Uri.parse('https://wa.me/$num'),
               mode: LaunchMode.externalApplication);
         }),
+        item(Icons.privacy_tip_outlined, kTeal, 'Privacy policy', () => launchUrl(
+            Uri.parse('$apiBase/privacy'),
+            mode: LaunchMode.externalApplication)),
+        item(Icons.description_outlined, kTeal, 'Terms of service', () => launchUrl(
+            Uri.parse('$apiBase/terms'),
+            mode: LaunchMode.externalApplication)),
+        item(Icons.delete_outline, const Color(0xFFB3261E), 'Delete account', () async {
+          final pw = TextEditingController();
+          final ok = await showDialog<bool>(
+              context: context,
+              builder: (c) => AlertDialog(
+                    title: T('Delete account', 'حذف الحساب'),
+                    content: Column(mainAxisSize: MainAxisSize.min, children: [
+                      T('This permanently deletes your account, addresses, photos and messages. Enter your password to confirm.',
+                          'ده هيحذف حسابك وعناوينك وصورك ورسايلك نهائيًا. اكتب كلمة المرور للتأكيد.'),
+                      TextField(
+                          controller: pw,
+                          obscureText: true,
+                          decoration: InputDecoration(hintText: tr('Password'))),
+                    ]),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(c, false),
+                          child: T('Cancel', 'إلغاء')),
+                      TextButton(
+                          onPressed: () => Navigator.pop(c, true),
+                          child: T('Delete', 'حذف',
+                              style: const TextStyle(color: Color(0xFFB3261E)))),
+                    ],
+                  ));
+          if (ok != true) return;
+          try {
+            await Api.deleteAccount(pw.text);
+            await Api.logout();
+            if (context.mounted)
+              Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+                  (_) => false);
+          } on ApiError catch (e) {
+            if (context.mounted)
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text(e.message)));
+          }
+        }),
         item(Icons.logout, const Color(0xFF9CA3AF), 'Log out', () async {
           await Api.logout();
           if (context.mounted)
