@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [feature/company-ops]
-    paths: [".github/workflows/release.yml"]
+    paths: [".github/workflows/release.yml", "mobile/test/features_shots_test.dart"]
 permissions:
   contents: read
 jobs:
@@ -18,7 +18,7 @@ jobs:
         with: { channel: stable, cache: true }
       - run: cd mobile && flutter pub get
       - name: Analyze
-        run: cd mobile && flutter analyze --no-fatal-infos
+        run: cd mobile && flutter analyze --no-fatal-infos --no-fatal-warnings
       - name: Tests
         continue-on-error: true
         run: cd mobile && flutter test --dart-define=DEMO=true

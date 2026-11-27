@@ -7,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sallehli/api.dart';
 import 'package:sallehli/config.dart';
 import 'package:sallehli/demo.dart';
-import 'package:sallehli/screens/home.dart';
 import 'package:sallehli/screens/v4.dart';
 import 'demo_test.dart' show boot, settle;
 import 'screens_test.dart' show loadFonts;
