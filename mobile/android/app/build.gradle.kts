@@ -5,6 +5,11 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+val keyProps = java.util.Properties().apply {
+    val f = rootProject.file("key.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.sallehli.sallehli"
     compileSdk = flutter.compileSdkVersion
@@ -30,11 +35,21 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("upload") {
+            if (keyProps.containsKey("storeFile")) {
+                storeFile = rootProject.file(keyProps.getProperty("storeFile"))
+                storePassword = keyProps.getProperty("storePassword")
+                keyAlias = keyProps.getProperty("keyAlias")
+                keyPassword = keyProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Signed with the upload key when key.properties exists (CI release build); debug key otherwise.
+            signingConfig = if (keyProps.containsKey("storeFile")) signingConfigs.getByName("upload") else signingConfigs.getByName("debug")
         }
     }
 }

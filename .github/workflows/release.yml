@@ -1,0 +1,45 @@
+name: Release build (APK + AAB)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - run: cd mobile && flutter pub get
+      - name: Analyze
+        run: cd mobile && flutter analyze --no-fatal-infos
+      - name: Tests
+        continue-on-error: true
+        run: cd mobile && flutter test --dart-define=DEMO=true
+      - name: Signing key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          umask 077
+          echo "$KS_B64" | base64 -d > mobile/android/upload.jks
+          printf 'storeFile=../upload.jks\nstorePassword=%s\nkeyAlias=tazbeeta\nkeyPassword=%s\n' "$KS_PASS" "$KS_PASS" > mobile/android/key.properties
+      - name: Build APK (arm64)
+        run: cd mobile && flutter build apk --release --target-platform android-arm64 --split-per-abi --dart-define=API_URL=https://tazbeeta.angluosr.workers.dev
+      - name: Build AAB
+        run: cd mobile && flutter build appbundle --release --dart-define=API_URL=https://tazbeeta.angluosr.workers.dev
+      - name: Verify signature
+        run: |
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$signer" verify --print-certs mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | head -3
+          sha256sum mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk mobile/build/app/outputs/bundle/release/app-release.aab
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tazbeeta-release
+          path: |
+            mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            mobile/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
