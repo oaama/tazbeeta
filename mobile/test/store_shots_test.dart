@@ -34,10 +34,11 @@ void main() {
       t.view.physicalSize = const Size(1080, 1920);
       t.view.devicePixelRatio = 2.625;
       await t.pump();
-      Future<void> open(Widget w, String name) async {
+      Future<void> open(Widget w, String name, {Future<void> Function()? pre}) async {
         final context = t.element(find.byType(Navigator).first);
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => w));
         await settle(t);
+        if (pre != null) await pre();
         await store(t, 'store_${lang}_$name');
         Navigator.of(t.element(find.byType(Navigator).first)).pop();
         await settle(t);
@@ -49,7 +50,11 @@ void main() {
       final services = await Api.services();
       final reqs = await Api.requests();
       await open(const HomeShell(), '1_home');
-      await open(NewRequestScreen(service: services.first as Map), '2_new_request');
+      await open(NewRequestScreen(service: services.first as Map), '2_new_request', pre: () async {
+        await t.dragUntilVisible(find.byIcon(Icons.access_time), find.byType(Scrollable).first, const Offset(0, -200));
+        await t.drag(find.byType(Scrollable).first, const Offset(0, -150));
+        await settle(t);
+      });
       await open(const ProjectsTab(), '3_requests');
       await open(ChatScreen(request: reqs.first as Map), '4_chat');
       await open(const MoreTab(), '5_more');

@@ -227,12 +227,21 @@ const _dayAr = ['الإثنين', 'الثلاثاء', 'الأربعاء', 'ال�
 String visitText(Map? v) {
   if (v == null) return L('To be agreed with the company', 'هيتحدد مع الشركة');
   final d = DateTime.parse(v['date']);
-  final slot = visitSlots[v['slot']];
-  return '${L(_dayEn[d.weekday - 1], _dayAr[d.weekday - 1])} ${d.day}/${d.month}'
-      '${slot == null ? '' : '  ·  ${L(slot[0], slot[1])}'}';
+  String t = '';
+  if (v['time'] != null) {
+    final p = v['time'].toString().split(':');
+    final h = int.parse(p[0]);
+    final h12 = h % 12 == 0 ? 12 : h % 12;
+    t = '  ·  $h12:${p[1]} ${h < 12 ? L('AM', 'ص') : L('PM', 'م')}';
+  } else if (visitSlots[v['slot']] != null) {
+    final slot = visitSlots[v['slot']]!;
+    t = '  ·  ${L(slot[0], slot[1])}';
+  }
+  return '${L(_dayEn[d.weekday - 1], _dayAr[d.weekday - 1])} ${d.day}/${d.month}$t';
 }
 
-/// Booking Appointment: preferred day and time window. The company confirms the real time.
+/// Booking Appointment: the customer picks any date and time that suits him.
+/// The company confirms the real time with him.
 class VisitPicker extends StatelessWidget {
   final Map? value;
   final ValueChanged<Map> onChanged;
@@ -241,62 +250,64 @@ class VisitPicker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final now = today ?? DateTime.now();
-    final days = [for (var i = 1; i <= 7; i++) DateTime(now.year, now.month, now.day + i)];
-    String key(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-    final sel = value?['date'];
+    String two(int n) => n.toString().padLeft(2, '0');
+    final date = value?['date'] as String?;
+    final time = value?['time'] as String?;
+    Widget box(IconData ic, String label, VoidCallback tap) => Expanded(
+        child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: tap,
+            child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: kBorder),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Row(children: [
+                  Icon(ic, size: 20, color: kTeal),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(label, overflow: TextOverflow.ellipsis))
+                ]))));
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      T('Preferred visit day', 'اليوم المناسب للزيارة',
+      T('Visit date and time that suit you', 'تاريخ ووقت الزيارة اللي يناسبك',
           style: const TextStyle(fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
-      SizedBox(
-          height: 90,
-          child: ListView(scrollDirection: Axis.horizontal, children: [
-            for (final d in days)
-              Padding(
-                  padding: const EdgeInsetsDirectional.only(end: 8),
-                  child: InkWell(
-                      borderRadius: BorderRadius.circular(12),
-                      onTap: () => onChanged(
-                          {'date': key(d), 'slot': value?['slot'] ?? 'morning'}),
-                      child: Container(
-                          width: 64,
-                          decoration: BoxDecoration(
-                              color: sel == key(d) ? kTeal : Colors.white,
-                              border: Border.all(
-                                  color: sel == key(d) ? kTeal : kBorder),
-                              borderRadius: BorderRadius.circular(12)),
-                          child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(L(_dayEn[d.weekday - 1], _dayAr[d.weekday - 1]),
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        color: sel == key(d)
-                                            ? Colors.white
-                                            : kMuted)),
-                                const SizedBox(height: 4),
-                                Text(quoteAmount({'amount': d.day.toDouble(), 'currency': ''}).trim(),
-                                    style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w700,
-                                        color: sel == key(d)
-                                            ? Colors.white
-                                            : kInk))
-                              ]))))
-          ])),
-      const SizedBox(height: 10),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final e in visitSlots.entries)
-          ChoiceChip(
-              label: Text(L(e.value[0], e.value[1])),
-              selected: value?['slot'] == e.key,
-              onSelected: sel == null
-                  ? null
-                  : (_) => onChanged({'date': sel, 'slot': e.key}))
+      Row(children: [
+        box(Icons.calendar_today_outlined,
+            date == null ? L('Choose date', 'اختار التاريخ') : visitText({'date': date}).trim(),
+            () async {
+          final first = DateTime(now.year, now.month, now.day);
+          final d = await showDatePicker(
+              context: context,
+              initialDate: date != null ? DateTime.parse(date) : first.add(const Duration(days: 1)),
+              firstDate: first,
+              lastDate: first.add(const Duration(days: 365)));
+          if (d != null) {
+            onChanged({'date': '${d.year}-${two(d.month)}-${two(d.day)}', 'time': time});
+          }
+        }),
+        const SizedBox(width: 8),
+        box(Icons.access_time,
+            time == null ? L('Choose time', 'اختار الوقت') : visitText({'date': date ?? '2000-01-03', 'time': time}).split('·').last.trim(),
+            () async {
+          final p = time?.split(':');
+          final tt = await showTimePicker(
+              context: context,
+              initialTime: p == null
+                  ? const TimeOfDay(hour: 10, minute: 0)
+                  : TimeOfDay(hour: int.parse(p[0]), minute: int.parse(p[1])));
+          if (tt != null) {
+            final d = date ?? () {
+              final x = DateTime(now.year, now.month, now.day + 1);
+              return '${x.year}-${two(x.month)}-${two(x.day)}';
+            }();
+            onChanged({'date': d, 'time': '${two(tt.hour)}:${two(tt.minute)}'});
+          }
+        }),
       ]),
       const SizedBox(height: 6),
-      T('The company confirms the exact time with you before the visit.',
-          'الشركة بتأكد معاك الميعاد بالظبط قبل الزيارة.',
+      T('Pick any day and time you like. The company confirms the exact time with you before the visit.',
+          'اختار أي يوم ووقت يناسبك. الشركة بتأكد معاك الميعاد بالظبط قبل الزيارة.',
           style: const TextStyle(fontSize: 12, color: kMuted))
     ]);
   }
