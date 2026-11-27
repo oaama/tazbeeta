@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api.dart';
+import '../gps.dart';
 import '../demo.dart';
 import '../lang.dart';
 import '../theme.dart';
@@ -331,14 +332,21 @@ class _LocationPickerState extends State<LocationPickerScreen> {
         setState(() => denied = true);
         return;
       }
-      final p = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              timeLimit: Duration(seconds: 8)));
+      final p = await Gps.bestFix();
       setState(() {
         gps = {'lat': p.latitude, 'lon': p.longitude};
         pin = const Offset(.5, .5);
       });
+      try {
+        final r = await Api.placesReverse(p.latitude, p.longitude);
+        final l = '${r?['osm']?['line'] ?? ''}'.trim();
+        if (l.isNotEmpty && line.text.trim().isEmpty && mounted)
+          setState(() => line.text = l);
+      } catch (_) {}
+      if (p.accuracy > 100 && mounted)
+        setState(() => error = L(
+            'GPS accuracy is low (about ${p.accuracy.round()} m). Check the address below or go outdoors and try again.',
+            'دقة الـGPS ضعيفة (حوالي ${p.accuracy.round()} متر). راجع العنوان تحت أو اخرج لمكان مفتوح وجرّب تاني.'));
     } catch (_) {
       setState(() => error =
           L('Could not get your location. Drop the pin by hand or type the address.',

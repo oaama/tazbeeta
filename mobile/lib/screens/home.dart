@@ -4,6 +4,7 @@ import '../lang.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api.dart';
+import '../gps.dart';
 import '../config.dart';
 import '../demo.dart';
 import '../theme.dart';
@@ -672,21 +673,25 @@ class _NewRequestState extends State<NewRequestScreen> {
         setState(() => placeNote = tr('Location access was not allowed. Type your village or area instead.'));
         return;
       }
-      final p = await Geolocator.getCurrentPosition(
-          locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              timeLimit: Duration(seconds: 10)));
+      final p = await Gps.bestFix();
       pickedLoc = {'lat': p.latitude, 'lon': p.longitude};
+      final acc = p.accuracy.round();
       final r = await Api.placesReverse(p.latitude, p.longitude);
+      final line = '${r?['osm']?['line'] ?? ''}'.trim();
+      // Fill the street address too (not only the area), unless the user already typed one.
+      if (line.isNotEmpty && addr.text.trim().isEmpty) addr.text = line;
+      final accNote = acc > 100
+          ? L(' GPS accuracy is low (about $acc m). Go outdoors and tap again, or check the address.', ' دقة الـGPS ضعيفة (حوالي $acc متر). اخرج لمكان مفتوح وجرّب تاني أو راجع العنوان.')
+          : '';
       final m = r?['match'];
       if (m is Map) {
         _pick({'source': 'list', ...Map<String, dynamic>.from(m)});
-        placeNote = tr('Location detected. You can change the place if it is wrong.');
+        placeNote = tr('Location detected. You can change the place if it is wrong.') + accNote;
       } else if (r?['osm']?['name'] != null) {
         place.text = '${r!['osm']['name']}';
         areaId = null;
         pickedLabel = place.text;
-        placeNote = tr('Location detected. Check the place name or type your own.');
+        placeNote = tr('Location detected. Check the place name or type your own.') + accNote;
       } else {
         placeNote = tr('Location saved, but the place name was not found. Type your village or area.');
       }
