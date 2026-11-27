@@ -29,7 +29,7 @@ jobs:
         run: |
           umask 077
           echo "$KS_B64" | base64 -d > mobile/android/upload.jks
-          printf 'storeFile=../upload.jks\nstorePassword=%s\nkeyAlias=tazbeeta\nkeyPassword=%s\n' "$KS_PASS" "$KS_PASS" > mobile/android/key.properties
+          printf 'storeFile=upload.jks\nstorePassword=%s\nkeyAlias=tazbeeta\nkeyPassword=%s\n' "$KS_PASS" "$KS_PASS" > mobile/android/key.properties
       - name: Build APK (arm64)
         run: cd mobile && flutter build apk --release --target-platform android-arm64 --split-per-abi --dart-define=API_URL=https://tazbeeta.angluosr.workers.dev
       - name: Build AAB
