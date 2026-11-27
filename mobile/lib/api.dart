@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -191,6 +192,19 @@ class Api {
     return Map<String, dynamic>.from(
         (await _call('GET', '/api/content'))['content']);
   }
+
+  /// Uploads one photo (request, before, after or receipt) to the company server.
+  static Future<void> uploadPhoto(String id, String kind, String path) async {
+    if (demoMode) return;
+    final bytes = await File(path).readAsBytes();
+    final mime = path.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+    await _call('POST', '/api/requests/$id/photos',
+        {'kind': kind, 'data': 'data:image/$mime;base64,${base64Encode(bytes)}'});
+  }
+
+  static Future<List<dynamic>> photos(String id) async => demoMode
+      ? <dynamic>[]
+      : ((await _call('GET', '/api/requests/$id/photos'))['photos'] as List);
 
   static Future<void> submitFeedback(int stars, String note) async {
     if (demoMode) {

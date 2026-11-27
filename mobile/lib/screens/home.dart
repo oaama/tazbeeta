@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart' hide Text;
 import '../lang.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../api.dart';
 import '../config.dart';
 import '../demo.dart';
@@ -556,6 +557,7 @@ class _NewRequestState extends State<NewRequestScreen> {
           ? (Api.session.user!['addresses'][0]['line'] ?? '')
           : '');
   bool busy = false;
+  final photoPaths = <String>[];
   String? error;
   List<dynamic> areas = [];
   List<dynamic> all = [];
@@ -756,6 +758,11 @@ class _NewRequestState extends State<NewRequestScreen> {
         Navigator.pop(context);
         return;
       }
+      for (final p in photoPaths) {
+        try {
+          await Api.uploadPhoto('${created['id']}', 'request', p);
+        } catch (_) {}
+      }
       Navigator.pushReplacement(
           context,
           MaterialPageRoute(
@@ -900,6 +907,31 @@ class _NewRequestState extends State<NewRequestScreen> {
                     label: T('Pick on the map', 'حدد على الخريطة'))),
             const SizedBox(height: 8),
             VisitPicker(value: visit, onChanged: (v) => setState(() => visit = v)),
+            const SizedBox(height: 10),
+            Row(children: [
+              const Icon(Icons.photo_camera_outlined, color: kTeal, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: T('Photos of the problem (up to 3, optional)',
+                      'صور للمشكلة (لحد 3، اختياري)',
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final p in photoPaths) photoThumb(p),
+              if (photoPaths.length < 3)
+                InkWell(
+                    onTap: () async {
+                      final p = await pickPhoto(context);
+                      if (p != null) setState(() => photoPaths.add(p));
+                    },
+                    child: Container(
+                        width: 76,
+                        height: 76,
+                        decoration: BoxDecoration(
+                            color: kMist, borderRadius: BorderRadius.circular(10)),
+                        child: const Icon(Icons.add_a_photo_outlined, color: kTeal)))
+            ]),
             if (error != null) ErrText(error!),
             const SizedBox(height: 24),
             PrimaryButton('Send request',
@@ -1630,6 +1662,15 @@ class MoreTab extends StatelessWidget {
             'Help and support',
             () => Navigator.push(context,
                 MaterialPageRoute(builder: (_) => const HelpPreviewScreen()))),
+        item(Icons.chat, const Color(0xFF25D366), 'WhatsApp support', () async {
+          var num = '201202422997';
+          try {
+            final c = await Api.appContent();
+            if ('${c['whatsapp'] ?? ''}'.isNotEmpty) num = '${c['whatsapp']}';
+          } catch (_) {}
+          await launchUrl(Uri.parse('https://wa.me/$num'),
+              mode: LaunchMode.externalApplication);
+        }),
         item(Icons.logout, const Color(0xFF9CA3AF), 'Log out', () async {
           await Api.logout();
           if (context.mounted)

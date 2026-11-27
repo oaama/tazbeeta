@@ -275,6 +275,7 @@ const _ar = <String, String>{
       'للمعاينة فقط. لن يتم إرسال بريد لاستعادة كلمة المرور.',
   'Enter the email address you used to register.': 'اكتب البريد اللي سجلت بيه.',
   'Verify your email': 'تأكيد البريد الإلكتروني',
+  'WhatsApp support': 'الدعم على واتساب',
   'Verification code': 'كود التأكيد',
   'Verify': 'تأكيد',
   'Resend code': 'إعادة إرسال الكود',

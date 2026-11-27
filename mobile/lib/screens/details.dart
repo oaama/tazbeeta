@@ -248,6 +248,20 @@ class ServiceDetailsScreen extends StatelessWidget {
                   child: Icon(icon, size: 21, color: kTeal)),
               title: Text(label, style: const TextStyle(fontSize: 13))),
         const SizedBox(height: 16),
+        if (service['startingPrice'] != null)
+          Container(
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                  color: kMist, borderRadius: BorderRadius.circular(12)),
+              child: Row(children: [
+                const Icon(Icons.sell_outlined, color: kTeal),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: Text(
+                        '${L('Starting from', 'يبدأ من')} ${service['startingPrice']} ${L('EGP', 'ج.م')}\n${L('Final price after inspection.', 'السعر النهائي بعد المعاينة.')}',
+                        style: const TextStyle(fontSize: 13, height: 1.6)))
+              ])),
         const Text(
             'No final price is set before inspection. Review the scope and price before accepting.',
             style: TextStyle(fontSize: 12, color: kMuted, height: 1.7)),
@@ -430,7 +444,30 @@ class _RequestDetailState extends State<RequestDetailsScreen> {
             const Text('Assigned team member',
                 style: TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 6),
-            Text('${r['technicianName']}')
+            Row(children: [
+              const CircleAvatar(
+                  backgroundColor: kMist, child: Icon(Icons.engineering, color: kTeal)),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${r['technicianName']}',
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                if (r['technician'] is Map && (r['technician'] as Map)['rating'] != null)
+                  Text('★ ${(r['technician'] as Map)['rating']}  (${(r['technician'] as Map)['jobs']})',
+                      style: const TextStyle(fontSize: 12, color: kMuted)),
+                Text(
+                    r['status'] == 'completed'
+                        ? L('Job completed', 'الشغل خلص')
+                        : r['status'] == 'in_progress'
+                            ? L('Working now', 'شغال دلوقتي')
+                            : r['onTheWay'] != null
+                                ? L('On the way to you', 'في الطريق ليك')
+                                : r['techAccepted'] != null
+                                    ? L('Accepted the job', 'قبل المهمة')
+                                    : L('Assigned, waiting to accept', 'اتعيّن وبانتظار القبول'),
+                    style: const TextStyle(fontSize: 12, color: kTeal, fontWeight: FontWeight.w600)),
+              ]))
+            ])
           ],
           if (!tech && q != null &&
               ['assigned', 'in_progress', 'completed'].contains(r['status'])) ...[

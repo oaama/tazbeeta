@@ -720,8 +720,8 @@ Future<String?> pickPhoto(BuildContext context, {bool camera = false}) async {
   try {
     final f = await ImagePicker().pickImage(
         source: camera ? ImageSource.camera : ImageSource.gallery,
-        maxWidth: 1600,
-        imageQuality: 80);
+        maxWidth: 1024,
+        imageQuality: 55);
     return f?.path;
   } catch (_) {
     if (context.mounted)
@@ -819,6 +819,7 @@ class _PayState extends State<PayScreen> {
       error = null;
     });
     try {
+      if (method == 'wallet' && receipt != null) await Api.uploadPhoto(widget.request['id'], 'receipt', receipt!);
       final r = await Api.action(widget.request['id'], {
         'action': 'pay',
         'method': method,
@@ -1013,6 +1014,11 @@ class InvoiceScreen extends StatelessWidget {
                 infoRow('Paid', 'المدفوع', m(paid), color: kOk),
                 infoRow('Remaining', 'المتبقي', m(total - paid),
                     color: total - paid > 0 ? kError : kOk),
+                const Divider(height: 26),
+                infoRow('Warranty', 'الضمان', L('30 days from completion', '30 يوم من تاريخ إنهاء الشغل')),
+                if (request['warrantyUntil'] != null)
+                  infoRow('Warranty valid until', 'الضمان ساري لحد',
+                      '${request['warrantyUntil']}'.split('T').first),
                 const SizedBox(height: 6),
                 Align(
                     alignment: AlignmentDirectional.centerEnd,
@@ -1508,9 +1514,21 @@ class _TaskState extends State<TaskDetailsScreen> {
 
   Future<void> photo(String kind) async {
     final p = await pickPhoto(context, camera: true);
-    if (p != null)
-      await run({'action': 'photo', 'kind': kind, 'path': p},
-          okEn: 'Photo added', okAr: 'اتضافت الصورة');
+    if (p == null) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await Api.uploadPhoto(r['id'], kind, p);
+      final ph = Map<String, dynamic>.from((r['photos'] as Map?) ?? {});
+      ph[kind] = [...((ph[kind] as List?) ?? []), p];
+      r['photos'] = ph;
+      if (mounted) toast(context, 'Photo added', 'اتضافت الصورة');
+    } on ApiError catch (e) {
+      error = e.message;
+    }
+    if (mounted) setState(() => busy = false);
   }
 
   Future<void> decline() async {
@@ -1568,6 +1586,9 @@ class _TaskState extends State<TaskDetailsScreen> {
           ],
           if (st == 'assigned' && accepted) ...[
             step(Icons.navigation_outlined, 'Navigate to the customer', 'روح للعميل بالخريطة', navigateTo),
+            if (r['onTheWay'] == null)
+              step(Icons.directions_car_outlined, 'I am on the way', 'أنا في الطريق',
+                  () => run({'action': 'onway'}, okEn: 'The customer was told you are on the way', okAr: 'العميل عرف إنك في الطريق')),
             step(Icons.play_circle_outline, 'I arrived, start the task', 'وصلت، ابدأ المهمة',
                 () => run({'action': 'arrive'}, okEn: 'Task started', okAr: 'المهمة بدأت'))
           ],
@@ -1625,10 +1646,9 @@ class _TaskState extends State<TaskDetailsScreen> {
           ],
           if (st == 'completed' && pay['method'] == 'cash' && pay['status'] == 'unpaid') ...[
             sectionTitle('Cash payment', 'الدفع كاش'),
-            PrimaryButton(L('I received the cash', 'استلمت الكاش'),
-                busy: busy,
-                onTap: () => run({'action': 'confirmCash'},
-                    okEn: 'Cash payment confirmed', okAr: 'اتأكد الدفع كاش'))
+            T('Hand the cash to the company. The company confirms the payment and settles your share after.',
+                'سلّم الكاش للشركة. الشركة بتأكد الدفع وبتحاسبك بعد كده.',
+                style: const TextStyle(fontSize: 13, color: kMuted))
           ],
           if (st == 'completed' && pay['method'] != null)
             Padding(
