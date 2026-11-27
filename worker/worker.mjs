@@ -258,6 +258,43 @@ var require_handler = __commonJS({
       if (u.role !== "admin") throw new HttpError(403, "Admins only");
       return u;
     };
+    var NOW = () => (/* @__PURE__ */ new Date()).toISOString();
+    async function notify(userId, text, requestId) {
+      if (!userId) return;
+      await L2.put("notifs", { id: L2.id(), userId, text, requestId: requestId || null, read: false, createdAt: NOW() });
+      try { await sendPush(userId, text, requestId); } catch (_) {}
+    }
+    var fcmTok = null;
+    async function fcmToken(sa) {
+      if (fcmTok && fcmTok.exp > Date.now() + 6e4) return fcmTok.t;
+      const b64u2 = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const te = new TextEncoder(), now = Math.floor(Date.now() / 1e3);
+      const head = b64u2(te.encode(JSON.stringify({ alg: "RS256", typ: "JWT" }))), pay = b64u2(te.encode(JSON.stringify({ iss: sa.client_email, scope: "https://www.googleapis.com/auth/firebase.messaging", aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 })));
+      const der = Uint8Array.from(atob(sa.private_key.replace(/-----[A-Z ]+-----/g, "").replace(/\s/g, "")), (c) => c.charCodeAt(0));
+      const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+      const sig = b64u2(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, te.encode(head + "." + pay)));
+      const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: head + "." + pay + "." + sig }) });
+      const j = await r.json();
+      if (!j.access_token) throw new Error("fcm auth");
+      fcmTok = { t: j.access_token, exp: Date.now() + 3e6 };
+      return j.access_token;
+    }
+    async function sendPush(userId, text, requestId) {
+      const raw = globalThis.process && globalThis.process.env && globalThis.process.env.FCM_SERVICE_ACCOUNT;
+      if (!raw) return;
+      const sa = JSON.parse(raw);
+      const devs = (await L2.all("devices")).filter((d) => d.userId === userId);
+      if (!devs.length) return;
+      const at = await fcmToken(sa);
+      for (const d of devs.slice(0, 5)) {
+        const r = await fetch("https://fcm.googleapis.com/v1/projects/" + sa.project_id + "/messages:send", { method: "POST", headers: { authorization: "Bearer " + at, "content-type": "application/json" }, body: JSON.stringify({ message: { token: d.token, notification: { title: "Tazbeeta", body: text.slice(0, 120) }, data: { requestId: requestId || "" }, android: { priority: "HIGH" } } }) });
+        if (r.status === 404 || r.status === 400) await L2.del("devices", d.id);
+      }
+    }
+    async function notifyAdmins(text, requestId) {
+      for (const a of (await L2.all("users")).filter((x) => x.role === "admin")) await notify(a.id, text, requestId);
+    }
+    var maskNums = (t) => String(t).replace(/\+?\d[\d\s().-]{6,}\d/g, "[number hidden]");
     var routes = [];
     var route = (m, path, fn) => routes.push({ m, re: new RegExp("^" + path.replace(/:(\w+)/g, "(?<$1>[^/]+)") + "$"), fn });
     route("GET", "/api/health", async () => ({ ok: true }));
@@ -461,7 +498,19 @@ var require_handler = __commonJS({
         const x = users.find((y) => y.id === id);
         return x ? x.firstName + " " + x.lastName : null;
       };
-      return { requests: list.map((r) => ({ ...r, customerName: u.role === "customer" ? void 0 : nm(r.customerId), technicianName: nm(r.technicianId) })).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
+      const all = await L2.all("requests");
+      const tinfo = (id) => {
+        if (!id) return null;
+        const x = users.find((y) => y.id === id);
+        const rs = all.filter((q) => q.technicianId === id && q.rating && q.rating.tech).map((q) => +q.rating.tech);
+        return x ? { name: x.firstName + " " + x.lastName, rating: rs.length ? +(rs.reduce((a, b) => a + b, 0) / rs.length).toFixed(1) : null, jobs: rs.length } : null;
+      };
+      const out = list.map((r) => {
+        const o = { ...r, customerName: u.role === "customer" ? void 0 : nm(r.customerId), technicianName: nm(r.technicianId), technician: u.role === "technician" ? void 0 : tinfo(r.technicianId), warrantyDays: 30, warrantyUntil: r.completedAt ? new Date(Date.parse(r.completedAt) + 30 * 864e5).toISOString() : null };
+        if (u.role === "technician") { delete o.contactPhone; delete o.customerPhone; }
+        return o;
+      });
+      return { requests: out.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
     });
     route("POST", "/api/admin/requests/:id/inspection", async ({ req, body, params }) => {
       await needAdmin(req);
@@ -485,6 +534,7 @@ var require_handler = __commonJS({
       r.status = "quoted";
       r.quoteAccepted = null;
       await L2.put("requests", r);
+      await notify(r.customerId, "Your quote is ready. Review and accept it.", r.id);
       return { request: r };
     });
     route("POST", "/api/requests/:id/accept-quote", async ({ req, body, params }) => {
@@ -511,7 +561,13 @@ var require_handler = __commonJS({
         if (r.customerId !== u.id || st !== "cancelled" || done || r.status === "in_progress") throw new HttpError(403, "Not allowed");
       } else if (u.role !== "admin" || done || st !== "cancelled") throw new HttpError(403, "Not allowed");
       r.status = st;
+      if (st === "completed") r.completedAt = NOW();
       await L2.put("requests", r);
+      const lbl = { in_progress: "Work started", completed: "Work completed", cancelled: "Request cancelled" }[st];
+      if (lbl) {
+        if (u.id !== r.customerId) await notify(r.customerId, lbl, r.id);
+        if (u.role !== "admin") await notifyAdmins(lbl + " (request " + r.id.slice(0, 6) + ")", r.id);
+      }
       return { request: r };
     });
     function validLoc(l) {
@@ -534,14 +590,26 @@ var require_handler = __commonJS({
       const u = await auth(req);
       const r = await L2.get("requests", params.id);
       if (!r || !await canChat(u, r)) throw new HttpError(404, "Not found");
-      return { messages: (await L2.all("messages")).filter((m) => m.requestId === r.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)) };
+      const us = await L2.all("users");
+      const content = await appContent();
+      const msgs = (await L2.all("messages")).filter((m) => m.requestId === r.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((m) => {
+        const x = us.find((y) => y.id === m.senderId);
+        const role = m.senderRole || (x ? x.role : "system");
+        return { ...m, senderRole: role, senderName: m.senderName || (role === "admin" ? "Tazbeeta team" : x ? x.firstName : "Tazbeeta") };
+      });
+      return { messages: msgs, adminCanReply: u.role !== "admin" || !r.technicianId || !!content.adminChatReply };
     });
     route("POST", "/api/requests/:id/messages", async ({ req, body, params }) => {
       const u = await auth(req);
       const r = await L2.get("requests", params.id);
       if (!r || !await canChat(u, r)) throw new HttpError(404, "Not found");
       if (!body.text || !String(body.text).trim()) throw bad("Empty message");
-      return { message: await L2.put("messages", { id: L2.id(), requestId: r.id, senderId: u.id, text: String(body.text).slice(0, 2e3), createdAt: (/* @__PURE__ */ new Date()).toISOString() }) };
+      if (u.role === "admin" && r.technicianId && !(await appContent()).adminChatReply) throw new HttpError(403, "Chat is view-only for the company once a technician is assigned");
+      let text = String(body.text).slice(0, 2e3);
+      if (u.role !== "admin" && r.technicianId) text = maskNums(text);
+      const m = await L2.put("messages", { id: L2.id(), requestId: r.id, senderId: u.id, senderRole: u.role, senderName: u.role === "admin" ? "Tazbeeta team" : u.firstName, text, createdAt: NOW() });
+      for (const to of [r.customerId, r.technicianId].filter((x) => x && x !== u.id)) await notify(to, "New message: " + text.slice(0, 60), r.id);
+      return { message: m };
     });
     route("GET", "/api/conversations", async ({ req }) => {
       const u = await auth(req);
@@ -950,7 +1018,12 @@ ${SIGN_AR}`;
       if ((await L2.all("requests")).some((x) => x.id !== r.id && x.technicianId === t.id && ["assigned", "in_progress"].includes(x.status))) throw bad("Technician has an active job");
       r.technicianId = t.id;
       r.status = "assigned";
+      r.techAccepted = null;
+      r.onTheWay = null;
       await L2.put("requests", r);
+      await L2.put("messages", { id: L2.id(), requestId: r.id, senderId: "system", senderRole: "system", senderName: "Tazbeeta", system: true, text: "Technician " + t.firstName + " " + t.lastName + " is assigned to this request.", createdAt: NOW() });
+      await notify(r.customerId, "A technician was assigned: " + t.firstName + " " + t.lastName, r.id);
+      await notify(t.id, "New job assigned to you", r.id);
       return { request: r };
     });
     route("POST", "/api/admin/services", async ({ req, body }) => {
@@ -960,13 +1033,13 @@ ${SIGN_AR}`;
       if (!slug) throw bad("A valid service id is required");
       const old = await L2.get("services", slug);
       const all = await L2.all("services");
-      return { service: await L2.put("services", { id: slug, name: body.name, nameAr: body.nameAr || "", popular: !!body.popular, active: body.active !== false, order: old ? old.order : all.length }) };
+      return { service: await L2.put("services", { id: slug, name: body.name, nameAr: body.nameAr || "", popular: !!body.popular, active: body.active !== false, startingPrice: Number.isFinite(+body.startingPrice) && +body.startingPrice > 0 ? Math.round(+body.startingPrice) : null, order: old ? old.order : all.length }) };
     });
-    var defaultContent = { id: "app", announcement: "", cashEnabled: true, help: [], payNumber: "", payName: "" };
+    var defaultContent = { id: "app", announcement: "", cashEnabled: true, help: [], payNumber: "", payName: "", whatsapp: "201202422997", commissionPct: 20, adminChatReply: false };
     var TERMS_EN = "Tazbeeta terms and privacy (default text, the company can edit it in the dashboard).\n\n1. Tazbeeta connects you with the company team for repair and maintenance services.\n2. Every request gets a quote after inspection. Nothing starts until you accept the quote.\n3. Payment is manual: cash or InstaPay / wallet transfer with a receipt photo. The company confirms payments from its dashboard.\n4. We keep your name, email, phone, addresses and request details only to run your requests and contact you. We do not sell your data.\n5. You can ask the company to delete your account and data at any time.\n6. Using the app means you agree to these terms. The company may update them and will show the latest version here.";
     var TERMS_AR = "\u0634\u0631\u0648\u0637 \u0648\u062E\u0635\u0648\u0635\u064A\u0629 \u062A\u0638\u0628\u064A\u0637\u0647 (\u0646\u0635 \u0645\u0628\u062F\u0626\u064A\u060C \u0627\u0644\u0634\u0631\u0643\u0629 \u062A\u0642\u062F\u0631 \u062A\u0639\u062F\u0644\u0647 \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u062A\u062D\u0643\u0645).\n\n\u0661. \u062A\u0638\u0628\u064A\u0637\u0647 \u0628\u064A\u0648\u0635\u0644\u0643 \u0628\u0641\u0631\u064A\u0642 \u0627\u0644\u0634\u0631\u0643\u0629 \u0644\u062E\u062F\u0645\u0627\u062A \u0627\u0644\u0635\u064A\u0627\u0646\u0629 \u0648\u0627\u0644\u0625\u0635\u0644\u0627\u062D.\n\u0662. \u0643\u0644 \u0637\u0644\u0628 \u0628\u064A\u0648\u0635\u0644\u0647 \u0639\u0631\u0636 \u0633\u0639\u0631 \u0628\u0639\u062F \u0627\u0644\u0645\u0639\u0627\u064A\u0646\u0629. \u0645\u0641\u064A\u0634 \u0634\u063A\u0644 \u0628\u064A\u0628\u062F\u0623 \u063A\u064A\u0631 \u0628\u0639\u062F \u0645\u0648\u0627\u0641\u0642\u062A\u0643 \u0639\u0644\u0649 \u0627\u0644\u0633\u0639\u0631.\n\u0663. \u0627\u0644\u062F\u0641\u0639 \u064A\u062F\u0648\u064A: \u0643\u0627\u0634 \u0623\u0648 \u062A\u062D\u0648\u064A\u0644 \u0625\u0646\u0633\u062A\u0627\u0628\u0627\u064A / \u0645\u062D\u0641\u0638\u0629 \u0645\u0639 \u0635\u0648\u0631\u0629 \u0627\u0644\u0625\u064A\u0635\u0627\u0644. \u0627\u0644\u0634\u0631\u0643\u0629 \u0628\u062A\u0623\u0643\u062F \u0627\u0644\u062F\u0641\u0639 \u0645\u0646 \u0644\u0648\u062D\u0629 \u0627\u0644\u062A\u062D\u0643\u0645.\n\u0664. \u0628\u0646\u062D\u062A\u0641\u0638 \u0628\u0627\u0633\u0645\u0643 \u0648\u0628\u0631\u064A\u062F\u0643 \u0648\u0631\u0642\u0645\u0643 \u0648\u0639\u0646\u0627\u0648\u064A\u0646\u0643 \u0648\u062A\u0641\u0627\u0635\u064A\u0644 \u0637\u0644\u0628\u0627\u062A\u0643 \u0628\u0633 \u0644\u062A\u0646\u0641\u064A\u0630 \u0637\u0644\u0628\u0627\u062A\u0643 \u0648\u0627\u0644\u062A\u0648\u0627\u0635\u0644 \u0645\u0639\u0627\u0643. \u0645\u0634 \u0628\u0646\u0628\u064A\u0639 \u0628\u064A\u0627\u0646\u0627\u062A\u0643.\n\u0665. \u062A\u0642\u062F\u0631 \u062A\u0637\u0644\u0628 \u0645\u0646 \u0627\u0644\u0634\u0631\u0643\u0629 \u062D\u0630\u0641 \u062D\u0633\u0627\u0628\u0643 \u0648\u0628\u064A\u0627\u0646\u0627\u062A\u0643 \u0641\u064A \u0623\u064A \u0648\u0642\u062A.\n\u0666. \u0627\u0633\u062A\u062E\u062F\u0627\u0645\u0643 \u0644\u0644\u062A\u0637\u0628\u064A\u0642 \u0645\u0639\u0646\u0627\u0647 \u0645\u0648\u0627\u0641\u0642\u062A\u0643 \u0639\u0644\u0649 \u0627\u0644\u0634\u0631\u0648\u0637 \u062F\u064A. \u0627\u0644\u0634\u0631\u0643\u0629 \u0645\u0645\u0643\u0646 \u062A\u062D\u062F\u0651\u062B\u0647\u0627 \u0648\u0647\u062A\u0638\u0647\u0631 \u0622\u062E\u0631 \u0646\u0633\u062E\u0629 \u0647\u0646\u0627.";
     var appContent = async () => {
-      const c = await L2.get("content", "app") || defaultContent;
+      const c = { ...defaultContent, ...await L2.get("content", "app") || {} };
       return { ...c, terms: c.terms || TERMS_EN, termsAr: c.termsAr || TERMS_AR };
     };
     route("GET", "/api/content", async () => ({ content: await appContent() }));
@@ -975,7 +1048,7 @@ ${SIGN_AR}`;
       if (typeof body.announcement !== "string" || body.announcement.length > 500 || typeof body.cashEnabled !== "boolean") throw bad("Invalid app settings");
       if (!Array.isArray(body.help) || body.help.length > 30 || body.help.some((h) => ["q", "qAr", "answer", "answerAr"].some((k) => typeof h[k] !== "string" || !h[k].trim() || h[k].length > 2e3))) throw bad("Invalid Help content");
       const prev = await appContent();
-      const content = await L2.put("content", { id: "app", payNumber: prev.payNumber || "", payName: prev.payName || "", ...typeof body.terms === "string" && typeof body.termsAr === "string" && body.terms.length <= 8e3 && body.termsAr.length <= 8e3 ? { terms: body.terms.trim(), termsAr: body.termsAr.trim() } : { terms: prev.terms || "", termsAr: prev.termsAr || "" }, announcement: body.announcement.trim(), cashEnabled: body.cashEnabled, help: body.help.map((h) => Object.fromEntries(["q", "qAr", "answer", "answerAr"].map((k) => [k, h[k].trim()]))) });
+      const content = await L2.put("content", { ...prev, id: "app", payNumber: prev.payNumber || "", payName: prev.payName || "", ...typeof body.terms === "string" && typeof body.termsAr === "string" && body.terms.length <= 8e3 && body.termsAr.length <= 8e3 ? { terms: body.terms.trim(), termsAr: body.termsAr.trim() } : { terms: prev.terms || "", termsAr: prev.termsAr || "" }, announcement: body.announcement.trim(), cashEnabled: body.cashEnabled, help: body.help.map((h) => Object.fromEntries(["q", "qAr", "answer", "answerAr"].map((k) => [k, h[k].trim()]))) });
       return { content };
     });
     route("POST", "/api/feedback", async ({ req, body }) => {
@@ -1016,7 +1089,12 @@ ${SIGN_AR}`;
       const num = typeof body.payNumber === "string" ? body.payNumber.trim() : "", name = typeof body.payName === "string" ? body.payName.trim() : "";
       if (num.length > 40 || name.length > 80 || num && !/^[+0-9 ()-]{5,40}$/.test(num)) throw bad("Enter a valid InstaPay or wallet number");
       const prev = await appContent();
-      return { content: await L2.put("content", { ...prev, id: "app", payNumber: num, payName: name }) };
+      const wa = typeof body.whatsapp === "string" ? body.whatsapp.replace(/[^0-9]/g, "") : prev.whatsapp || "";
+      if (wa && (wa.length < 8 || wa.length > 15)) throw bad("Enter the WhatsApp number with country code");
+      const cp = body.commissionPct === void 0 ? prev.commissionPct : Number(body.commissionPct);
+      if (cp !== void 0 && cp !== null && (!Number.isFinite(cp) || cp < 0 || cp > 90)) throw bad("Commission must be between 0 and 90");
+      const ar = typeof body.adminChatReply === "boolean" ? body.adminChatReply : !!prev.adminChatReply;
+      return { content: await L2.put("content", { ...prev, id: "app", payNumber: num, payName: name, whatsapp: wa, commissionPct: cp === void 0 ? 20 : cp, adminChatReply: ar }) };
     });
     route("POST", "/api/requests/:id/pay", async ({ req, body, params }) => {
       const u = await auth(req);
@@ -1067,6 +1145,155 @@ ${SIGN_AR}`;
         return { requestId: r.id, customerId: r.customerId, serviceId: r.serviceId, status: r.status, currency: r.quote.currency || "EGP", total: t, paid, remaining: t - paid, paymentStatus: r.payment && r.payment.status || "unpaid", createdAt: r.createdAt };
       });
       return { invoices: inv.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))) };
+    });
+    var PHOTO_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/;
+    route("POST", "/api/requests/:id/photos", async ({ req, body, params }) => {
+      const u = await auth(req);
+      const r = await L2.get("requests", params.id);
+      if (!r || !await canChat(u, r)) throw new HttpError(404, "Not found");
+      if (u.role === "admin") throw new HttpError(403, "Not allowed");
+      if (typeof body.data !== "string" || body.data.length > 22e4 || !PHOTO_RE.test(body.data)) throw bad("Send a smaller JPEG or PNG photo");
+      const kind = u.role === "technician" ? (body.kind === "after" ? "after" : "before") : "request";
+      if (["cancelled"].includes(r.status) || u.role === "customer" && ["completed"].includes(r.status)) throw bad("Photos cannot be added now");
+      const mine = (await L2.all("photos")).filter((x) => x.requestId === r.id && x.kind === kind);
+      if (mine.length >= (kind === "request" ? 3 : 6)) throw bad("Photo limit reached");
+      const ph = await L2.put("photos", { id: L2.id(), requestId: r.id, kind, by: u.id, data: body.data, createdAt: NOW() });
+      if (u.role === "technician") await notify(r.customerId, "The technician added a photo", r.id);
+      return { photo: { id: ph.id, kind } };
+    });
+    route("GET", "/api/requests/:id/photos", async ({ req, params }) => {
+      const u = await auth(req);
+      const r = await L2.get("requests", params.id);
+      if (!r || !await canChat(u, r)) throw new HttpError(404, "Not found");
+      return { photos: (await L2.all("photos")).filter((x) => x.requestId === r.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((x) => ({ id: x.id, kind: x.kind, data: x.data, createdAt: x.createdAt })) };
+    });
+    route("POST", "/api/devices", async ({ req, body }) => {
+      const u = await auth(req);
+      const tk = String(body.token || "");
+      if (tk.length < 20 || tk.length > 400) throw bad("Invalid token");
+      const id = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(tk))), (x) => x.toString(16).padStart(2, "0")).join("").slice(0, 32);
+      await L2.put("devices", { id, userId: u.id, token: tk, at: NOW() });
+      return { ok: true };
+    });
+    route("GET", "/api/notifications", async ({ req }) => {
+      const u = await auth(req);
+      const list = (await L2.all("notifs")).filter((n) => n.userId === u.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return { notifications: list.slice(0, 60), unread: list.filter((n) => !n.read).length };
+    });
+    route("POST", "/api/notifications/read", async ({ req }) => {
+      const u = await auth(req);
+      for (const n of (await L2.all("notifs")).filter((x) => x.userId === u.id && !x.read)) await L2.put("notifs", { ...n, read: true });
+      return { ok: true };
+    });
+    route("POST", "/api/requests/:id/v4", async ({ req, body, params }) => {
+      const u = await auth(req);
+      const r = await L2.get("requests", params.id);
+      if (!r) throw new HttpError(404, "Not found");
+      const cust = u.role === "customer" && r.customerId === u.id, tech = u.role === "technician" && r.technicianId === u.id;
+      if (!cust && !tech) throw new HttpError(403, "Not allowed");
+      const st = r.status, a = body.action;
+      const txt = (k, max = 500) => String(body[k] == null ? "" : body[k]).trim().slice(0, max);
+      const p = r.payment || {};
+      if (cust && a === "rejectQuote") {
+        if (st !== "quoted") throw bad("There is no quote to decline.");
+        if (txt("reason").length < 3) throw bad("Tell us why (at least 3 characters).");
+        r.quoteRejected = { reason: txt("reason"), version: r.quote.version };
+        r.status = "inspection";
+        await notifyAdmins("Customer declined the quote: " + txt("reason", 80), r.id);
+      } else if (cust && a === "cancel") {
+        if (!["pending", "inspection", "quoted", "approved", "assigned"].includes(st)) throw bad("This request can no longer be cancelled.");
+        if (txt("reason").length < 3) throw bad("Choose or write a reason.");
+        r.cancelReason = txt("reason");
+        r.status = "cancelled";
+        await notifyAdmins("Customer cancelled a request: " + txt("reason", 80), r.id);
+        if (r.technicianId) await notify(r.technicianId, "A job was cancelled by the customer", r.id);
+      } else if (cust && a === "pay") {
+        if (!r.quote || !PAY_OPEN.includes(st)) throw bad("Payment opens after the quote is accepted.");
+        if (!["cash", "wallet"].includes(body.method)) throw bad("Choose cash or wallet transfer.");
+        if (p.status === "paid" || p.status === "pending") throw bad("This payment is already being handled.");
+        const receipt = txt("receipt", 400);
+        if (body.method === "wallet" && !receipt) throw bad("Upload the transfer receipt first.");
+        r.payment = { method: body.method, status: body.method === "cash" ? "unpaid" : "pending", ...body.method === "wallet" ? { receipt } : {}, amount: total(r), at: NOW(), history: [...p.history || []] };
+        await notifyAdmins("Payment " + body.method + " for request " + r.id.slice(0, 6), r.id);
+      } else if (cust && a === "rate") {
+        if (st !== "completed") throw bad("You can rate after the job is completed.");
+        const t = Number(body.tech || 0), sv = Number(body.service || 0);
+        if (!(t >= 1 && t <= 5 && sv >= 1 && sv <= 5)) throw bad("Choose 1 to 5 stars.");
+        r.rating = { tech: t, service: sv, note: txt("note") };
+      } else if (tech && a === "accept") {
+        if (st !== "assigned") throw bad("This task is not waiting for you.");
+        r.techAccepted = NOW();
+        await notify(r.customerId, "Your technician accepted the job", r.id);
+      } else if (tech && a === "onway") {
+        if (st !== "assigned" || !r.techAccepted) throw bad("Accept the task first.");
+        r.onTheWay = NOW();
+        await notify(r.customerId, "Your technician is on the way", r.id);
+      } else if (tech && a === "reject") {
+        if (st !== "assigned" || r.techAccepted) throw bad("This task cannot be declined now.");
+        if (txt("reason").length < 3) throw bad("Tell the team why.");
+        r.techDeclined = { by: u.id, reason: txt("reason") };
+        r.technicianId = null;
+        r.status = "approved";
+        await notifyAdmins("Technician declined a job: " + txt("reason", 80), r.id);
+      } else if (tech && a === "arrive") {
+        if (st !== "assigned" || !r.techAccepted) throw bad("Accept the task first.");
+        r.arrivedAt = NOW();
+        r.status = "in_progress";
+        await notify(r.customerId, "Work started", r.id);
+      } else if (tech && a === "part") {
+        if (st !== "in_progress") throw bad("Start the task first.");
+        const cost = Number(body.cost || 0), n = Number(body.qty || 1);
+        if (!txt("name", 80) || !(cost >= 0) || !(n >= 1)) throw bad("Name, quantity and cost are required.");
+        r.parts = [...r.parts || [], { name: txt("name", 80), qty: n, cost }].slice(-30);
+      } else if (tech && a === "report") {
+        if (st !== "in_progress") throw bad("Start the task first.");
+        if (txt("text").length < 5) throw bad("Write what was done.");
+        r.report = { text: txt("text", 1e3), hours: body.hours == null ? null : Number(body.hours) || null };
+      } else if (tech && a === "confirmCash") {
+        throw bad("The company confirms cash. Hand the money to the company.");
+      } else if (tech && a === "photo") {
+        throw bad("Use the photo upload.");
+      } else throw bad("This action is not allowed.");
+      await L2.put("requests", r);
+      return { request: r };
+    });
+    async function settleRows() {
+      const content = await appContent();
+      const users = await L2.all("users");
+      return (await L2.all("requests")).filter((r) => r.status === "completed" && r.technicianId && r.quote && r.payment && r.payment.status === "paid").map((r) => {
+        const t = users.find((x) => x.id === r.technicianId);
+        const pct = t && typeof t.commissionPct === "number" ? t.commissionPct : typeof content.commissionPct === "number" ? content.commissionPct : 20;
+        const tot = total(r), com = Math.round(tot * pct) / 100;
+        return { requestId: r.id, technicianId: r.technicianId, technicianName: t ? t.firstName + " " + t.lastName : "", serviceId: r.serviceId, currency: r.quote.currency || "EGP", collected: tot, commissionPct: pct, commission: com, technicianShare: tot - com, completedAt: r.completedAt || null, settled: !!r.settlement, settledAt: r.settlement ? r.settlement.at : null };
+      }).sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)));
+    }
+    route("GET", "/api/admin/settlements", async ({ req }) => {
+      await needAdmin(req);
+      const rows = await settleRows();
+      const by = {};
+      for (const x of rows) { const b = by[x.technicianId] = by[x.technicianId] || { technicianId: x.technicianId, technicianName: x.technicianName, jobs: 0, collected: 0, commission: 0, owed: 0, paid: 0 }; b.jobs++; b.collected += x.collected; b.commission += x.commission; if (x.settled) b.paid += x.technicianShare; else b.owed += x.technicianShare; }
+      return { rows, technicians: Object.values(by) };
+    });
+    route("POST", "/api/admin/settlements/:id/pay", async ({ req, params }) => {
+      const a = await needAdmin(req);
+      const r = await L2.get("requests", params.id);
+      if (!r) throw new HttpError(404, "Not found");
+      const row = (await settleRows()).find((x) => x.requestId === r.id);
+      if (!row) throw bad("Only completed jobs with money collected can be settled");
+      if (r.settlement) throw bad("Already settled");
+      r.settlement = { at: NOW(), amount: row.technicianShare, commission: row.commission, by: a.id };
+      await L2.put("requests", r);
+      await notify(r.technicianId, "Payment for a completed job was sent to you", r.id);
+      return { request: r };
+    });
+    route("PUT", "/api/admin/technicians/:id/commission", async ({ req, body, params }) => {
+      await needAdmin(req);
+      const t = await L2.get("users", params.id);
+      if (!t || t.role !== "technician") throw new HttpError(404, "Not found");
+      const v = body.commissionPct === null ? null : Number(body.commissionPct);
+      if (v !== null && !(Number.isFinite(v) && v >= 0 && v <= 90)) throw bad("Commission must be between 0 and 90");
+      await L2.put("users", { ...t, commissionPct: v });
+      return { ok: true };
     });
     var CSTAT = ["open", "in_review", "resolved"];
     route("POST", "/api/complaints", async ({ req, body }) => {
@@ -1407,12 +1634,12 @@ var worker_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
     globalThis.process = globalThis.process || { env: {} };
-    for (const k of ["JWT_SECRET", "ADMIN_EMAIL", "SITE_URL", "PBKDF2_ITER", "MAX_LOCATION_AGE_MIN", "BOT_KEY", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER", "GMAIL_FROM", "REQUIRE_VERIFY"]) if (typeof env[k] === "string") process.env[k] = env[k];
+    for (const k of ["JWT_SECRET", "ADMIN_EMAIL", "SITE_URL", "PBKDF2_ITER", "MAX_LOCATION_AGE_MIN", "BOT_KEY", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER", "GMAIL_FROM", "REQUIRE_VERIFY", "FCM_SERVICE_ACCOUNT"]) if (typeof env[k] === "string") process.env[k] = env[k];
     if (!process.env.SITE_URL) process.env.SITE_URL = url.origin;
     if (url.pathname.startsWith("/api/")) {
       L.bind(env.DB);
       const body = request.method === "GET" || request.method === "OPTIONS" ? void 0 : await request.text();
-      if (body && body.length > 7e4) return new Response('{"error":"Request too large"}', { status: 413, headers: { "content-type": "application/json" } });
+      if (body && body.length > (url.pathname.endsWith("/photos") || url.pathname.endsWith("/v4") ? 3e5 : 7e4)) return new Response('{"error":"Request too large"}', { status: 413, headers: { "content-type": "application/json" } });
       const headers = {};
       request.headers.forEach((v, k) => {
         headers[k.toLowerCase()] = v;
