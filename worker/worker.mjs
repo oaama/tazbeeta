@@ -716,6 +716,14 @@ ${SIGN_AR}`;
       for (let i = 0; i < k.length; i++) d |= k.charCodeAt(i) ^ h.charCodeAt(i);
       if (d) throw new HttpError(401, "Unauthorized");
     };
+    route("GET", "/api/backup", async ({ req }) => {
+      const k = process.env.BACKUP_KEY || "", h = req.headers["x-backup-key"] || "";
+      if (k.length < 24 || h.length !== k.length) throw new HttpError(401, "Unauthorized");
+      let d = 0;
+      for (let i = 0; i < k.length; i++) d |= k.charCodeAt(i) ^ h.charCodeAt(i);
+      if (d) throw new HttpError(401, "Unauthorized");
+      return { exportedAt: (/* @__PURE__ */ new Date()).toISOString(), docs: await L2.dumpAll() };
+    });
     route("POST", "/api/admin/users/:id/send-reset", async ({ req, params }) => {
       await needAdmin(req);
       const u = await L2.get("users", params.id);
@@ -1699,7 +1707,7 @@ var worker_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
     globalThis.process = globalThis.process || { env: {} };
-    for (const k of ["JWT_SECRET", "ADMIN_EMAIL", "SITE_URL", "PBKDF2_ITER", "MAX_LOCATION_AGE_MIN", "BOT_KEY", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER", "GMAIL_FROM", "REQUIRE_VERIFY", "FCM_SERVICE_ACCOUNT"]) if (typeof env[k] === "string") process.env[k] = env[k];
+    for (const k of ["JWT_SECRET", "ADMIN_EMAIL", "SITE_URL", "PBKDF2_ITER", "MAX_LOCATION_AGE_MIN", "BOT_KEY", "BACKUP_KEY", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_SENDER", "GMAIL_FROM", "REQUIRE_VERIFY", "FCM_SERVICE_ACCOUNT"]) if (typeof env[k] === "string") process.env[k] = env[k];
     if (!process.env.SITE_URL) process.env.SITE_URL = url.origin;
     if (url.pathname.startsWith("/api/")) {
       L.bind(env.DB);

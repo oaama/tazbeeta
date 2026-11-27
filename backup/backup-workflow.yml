@@ -1,0 +1,32 @@
+name: Daily backup
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export and encrypt
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          BACKUP_KEY: ${{ secrets.BACKUP_KEY }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -e
+          mkdir -p backups
+          f=backups/tazbeeta-$(date -u +%F).json.gz.enc
+          curl -sf -H "x-backup-key: $BACKUP_KEY" "$WORKER_URL/api/backup" -o /tmp/b.json
+          test "$(jq '.docs|length' /tmp/b.json)" -gt 0
+          gzip -c /tmp/b.json | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_PASSPHRASE -out "$f"
+          ls -l "$f"
+      - name: Commit
+        run: |
+          git config user.name "backup-bot"
+          git config user.email "backup-bot@users.noreply.github.com"
+          git add backups
+          git commit -m "Backup $(date -u +%F)" || echo "nothing new"
+          git push
