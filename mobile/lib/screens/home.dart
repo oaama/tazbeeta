@@ -1445,22 +1445,49 @@ class _ChatState extends State<ChatScreen> {
             itemBuilder: (_, i) {
               final m = msgs[msgs.length - 1 - i] as Map;
               final mine = m['senderId'] == me;
+              if (m['system'] == true || m['senderRole'] == 'system') {
+                return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Center(
+                        child: Text(sampleText(m, 'text'),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                fontSize: 12, color: kMuted))));
+              }
+              final role = '${m['senderRole'] ?? ''}';
+              final who = role == 'admin'
+                  ? tr('Tazbeeta team')
+                  : '${m['senderName'] ?? ''}';
               return Align(
                 alignment: mine
                     ? AlignmentDirectional.centerEnd
                     : AlignmentDirectional.centerStart,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(vertical: 3),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-                  constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * .75),
-                  decoration: BoxDecoration(
-                      color: mine ? kTeal : kDisabledBg,
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Text(sampleText(m, 'text'),
-                      style: TextStyle(
-                          color: mine ? Colors.white : kInk, fontSize: 14.5)),
+                child: Column(
+                  crossAxisAlignment: mine
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  children: [
+                    if (!mine && who.isNotEmpty)
+                      Padding(
+                          padding: const EdgeInsets.only(top: 4, left: 4, right: 4),
+                          child: Text(who,
+                              style: const TextStyle(
+                                  fontSize: 11, color: kMuted))),
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 13, vertical: 9),
+                      constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * .75),
+                      decoration: BoxDecoration(
+                          color: mine ? kTeal : kDisabledBg,
+                          borderRadius: BorderRadius.circular(14)),
+                      child: Text(sampleText(m, 'text'),
+                          style: TextStyle(
+                              color: mine ? Colors.white : kInk,
+                              fontSize: 14.5)),
+                    ),
+                  ],
                 ),
               );
             },

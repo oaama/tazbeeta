@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "877353671297",
+    "project_id": "tazbeeta-60933",
+    "storage_bucket": "tazbeeta-60933.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:877353671297:android:cdcedf843c342e0157cb80",
+        "android_client_info": {
+          "package_name": "com.sallehli.sallehli"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVr-YYSShmGK6eR4hzBCQGkeXmFFdJdVM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

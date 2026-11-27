@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'push.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -67,6 +68,7 @@ class Api {
     await p.setString('token', session.token!);
     if (session.refresh != null) await p.setString('refresh', session.refresh!);
     await p.setString('user', jsonEncode(session.user));
+    Push.register();
   }
 
   static Future<void> logout() async {
@@ -280,6 +282,8 @@ class Api {
     await _save();
   }
 
+  static Future<void> registerDevice(String token) async =>
+      _call('POST', '/api/devices', {'token': token});
   static Future<List<dynamic>> conversations() async =>
       (await _call('GET', '/api/conversations'))['conversations'] as List;
   static Future<List<dynamic>> messages(String id) async =>

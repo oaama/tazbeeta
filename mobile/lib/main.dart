@@ -8,12 +8,15 @@ import 'screens/splash.dart';
 import 'screens/home.dart';
 import 'theme.dart';
 import 'screens/v4.dart';
+import 'push.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Api.restore();
   await Lang.restore();
   await Onboarding.restore();
+  await Push.init();
+  Push.register();
   runApp(const SallehliApp());
 }
 
