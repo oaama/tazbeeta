@@ -653,7 +653,8 @@ class _QuoteState extends State<QuoteScreen> {
 
 /// Asks for a reason from a short list or free text. Returns null when the user backs out.
 Future<String?> askReason(
-    BuildContext context, String title, List<List<String>> options) async {
+    BuildContext context, String title, List<List<String>> options,
+    {String? note}) async {
   final other = TextEditingController();
   String? picked;
   return showModalBottomSheet<String>(
@@ -672,6 +673,16 @@ Future<String?> askReason(
                     Text(title,
                         style: const TextStyle(
                             fontSize: 17, fontWeight: FontWeight.w700)),
+                    if (note != null && note.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7E6),
+                              borderRadius: BorderRadius.circular(10)),
+                          child: Text(note,
+                              style: const TextStyle(fontSize: 13, height: 1.4)))
+                    ],
                     const SizedBox(height: 10),
                     for (final o in options)
                       RadioListTile<String>(
@@ -712,6 +723,27 @@ Future<String?> askReason(
                   ]))));
 }
 
+const _defPolicyBefore = [
+  'Free to cancel. No technician has been assigned yet.',
+  'الإلغاء مجاني. لسه ماتعيّنش فني.'
+];
+const _defPolicyAfter = [
+  'A technician is already assigned. You can cancel until the work starts, and the team will tell the technician. Once work has started, contact the company.',
+  'اتعيّن فني بالفعل. تقدر تلغي لحد ما الشغل يبدأ، والفريق هيبلّغ الفني. لو الشغل بدأ كلّم الشركة.'
+];
+
+/// Cancellation rules shown to the customer. The company can replace the default text in Admin > App content.
+Future<String> cancelPolicyText(Map r) async {
+  final assigned = r['status'] == 'assigned' || r['technicianId'] != null;
+  try {
+    final c = await Api.appContent();
+    final custom = (L('${c['cancelPolicy'] ?? ''}', '${c['cancelPolicyAr'] ?? ''}')).trim();
+    if (assigned && custom.isNotEmpty) return custom;
+  } catch (_) {}
+  final d = assigned ? _defPolicyAfter : _defPolicyBefore;
+  return L(d[0], d[1]);
+}
+
 const cancelReasons = [
   ['I booked by mistake', 'عملت الطلب بالغلط'],
   ['I solved it another way', 'حليتها بطريقة تانية'],
@@ -721,7 +753,9 @@ const cancelReasons = [
 
 /// Cancel Request with a reason. Returns true when cancelled.
 Future<bool> cancelWithReason(BuildContext context, Map r) async {
-  final why = await askReason(context, L('Cancel this request', 'إلغاء الطلب'), cancelReasons);
+  final why = await askReason(
+      context, L('Cancel this request', 'إلغاء الطلب'), cancelReasons,
+      note: await cancelPolicyText(r));
   if (why == null) return false;
   try {
     await Api.action(r['id'], {'action': 'cancel', 'reason': why});
@@ -1347,12 +1381,58 @@ class _ComplaintState extends State<ComplaintScreen> {
                 for (final c in mine)
                   Card(
                       margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                          title: Text('${c['text']}', maxLines: 2, overflow: TextOverflow.ellipsis),
-                          subtitle: T(
-                              c['status'] == 'open' ? 'Open' : 'Answered',
-                              c['status'] == 'open' ? 'مفتوحة' : 'تم الرد')))
+                      child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(children: [
+                                  _statusChip('${c['status']}'),
+                                  const Spacer(),
+                                  Text('${c['createdAt'] ?? ''}'.split('T').first,
+                                      style: const TextStyle(fontSize: 12, color: kMuted))
+                                ]),
+                                const SizedBox(height: 8),
+                                Text('${c['text']}'),
+                                if ('${c['reply'] ?? ''}'.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                          color: const Color(0xFFE8F3F1),
+                                          borderRadius: BorderRadius.circular(10)),
+                                      child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            T('Reply from the team', 'رد الفريق',
+                                                style: const TextStyle(
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: kTeal)),
+                                            const SizedBox(height: 4),
+                                            Text('${c['reply']}')
+                                          ]))
+                                ]
+                              ])))
             ]));
+}
+
+Widget _statusChip(String st) {
+  const m = {
+    'open': ['Received', 'اتستلمت', Color(0xFFB26A00)],
+    'in_review': ['In review', 'قيد المراجعة', Color(0xFF1565C0)],
+    'resolved': ['Resolved', 'تم الحل', Color(0xFF2E7D32)],
+    'closed': ['Closed', 'اتقفلت', Color(0xFF616161)]
+  };
+  final e = m[st] ?? ['Answered', 'تم الرد', const Color(0xFF2E7D32)];
+  return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+          color: (e[2] as Color).withOpacity(0.12),
+          borderRadius: BorderRadius.circular(20)),
+      child: Text(L(e[0] as String, e[1] as String),
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: e[2] as Color)));
 }
 
 /// Notifications Center built from the live state of the user's orders.
@@ -1363,7 +1443,7 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsState extends State<NotificationsScreen> {
-  List<Map<String, String>>? items;
+  List<dynamic>? items;
   String? error;
   Future<void> load() async {
     setState(() {
@@ -1371,37 +1451,13 @@ class _NotificationsState extends State<NotificationsScreen> {
       error = null;
     });
     try {
-      final rs = await Api.requests();
-      final out = <Map<String, String>>[];
-      for (final r in rs.cast<Map>()) {
-        final id = '#${r['id']}'.toUpperCase();
-        final cust = Api.session.role == 'customer';
-        final st = r['status'];
-        String en = '', ar = '';
-        if (cust) {
-          switch (st) {
-            case 'pending': en = 'Order $id received.'; ar = 'استلمنا الطلب $id.';
-            case 'inspection': en = 'Inspection recorded for $id.'; ar = 'اتسجلت المعاينة للطلب $id.';
-            case 'quoted': en = 'A price quote for $id is waiting for you.'; ar = 'عرض سعر للطلب $id مستنيك.';
-            case 'approved': en = 'You accepted the quote for $id.'; ar = 'قبلت عرض السعر للطلب $id.';
-            case 'assigned': en = 'A technician was assigned to $id.'; ar = 'اتعيّن فني للطلب $id.';
-            case 'in_progress': en = 'Work started on $id.'; ar = 'الشغل بدأ في الطلب $id.';
-            case 'completed': en = '$id is completed. Rate the work.'; ar = 'الطلب $id خلص. قيّم الشغل.';
-            case 'cancelled': en = '$id was cancelled.'; ar = 'الطلب $id اتلغى.';
-          }
-          final p = (r['payment'] as Map?)?['status'];
-          if (p == 'paid') { en = 'Payment for $id confirmed.'; ar = 'تم تأكيد دفع الطلب $id.'; }
-          if (p == 'rejected') { en = 'The transfer for $id was rejected. Pay again.'; ar = 'تحويل الطلب $id اترفض. ادفع تاني.'; }
-        } else if (st == 'assigned' && r['techAccepted'] == null) {
-          en = 'New task $id is waiting for your answer.';
-          ar = 'مهمة جديدة $id مستنية ردك.';
-        } else if (st == 'in_progress') {
-          en = 'Task $id is in progress.'; ar = 'المهمة $id شغالة.';
-        }
-        if (en.isNotEmpty)
-          out.add({'en': en, 'ar': ar, 'at': '${r['createdAt'] ?? ''}', 'st': '$st'});
+      final l = await Api.notifications();
+      if (mounted) setState(() => items = l);
+      if (l.any((n) => n['read'] != true)) {
+        try {
+          await Api.markNotificationsRead();
+        } catch (_) {}
       }
-      if (mounted) setState(() => items = out);
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     }
@@ -1411,6 +1467,13 @@ class _NotificationsState extends State<NotificationsScreen> {
   void initState() {
     super.initState();
     load();
+  }
+
+  String when(String iso) {
+    final d = DateTime.tryParse(iso)?.toLocal();
+    if (d == null) return '';
+    final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    return '${d.day}/${d.month}  $h:${d.minute.toString().padLeft(2, '0')} ${d.hour < 12 ? L('AM', 'ص') : L('PM', 'م')}';
   }
 
   @override
@@ -1425,19 +1488,30 @@ class _NotificationsState extends State<NotificationsScreen> {
                       'Updates about your orders show up here.',
                       'تحديثات طلباتك بتظهر هنا.',
                       icon: Icons.notifications_none)
-                  : ListView(children: [
-                      for (final n in items!)
-                        ListTile(
-                            leading: CircleIcon(
-                                n['st'] == 'quoted' || n['st'] == 'completed'
-                                    ? Icons.notifications_active
-                                    : Icons.notifications_none,
-                                n['st'] == 'quoted' || n['st'] == 'completed'
-                                    ? kAmber
-                                    : kBrandTeal),
-                            title: T(n['en']!, n['ar']!),
-                            subtitle: Text(n['at']!.split('T').first))
-                    ]));
+                  : RefreshIndicator(
+                      onRefresh: load,
+                      child: ListView.separated(
+                          itemCount: items!.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (c, i) {
+                            final n = items![i] as Map;
+                            final unread = n['read'] != true;
+                            final txt = L('${n['text']}',
+                                '${n['textAr'] ?? n['text']}');
+                            return ListTile(
+                                tileColor: unread ? const Color(0xFFF0F8F6) : null,
+                                leading: CircleIcon(
+                                    unread
+                                        ? Icons.notifications_active
+                                        : Icons.notifications_none,
+                                    unread ? kAmber : kBrandTeal),
+                                title: Text(txt,
+                                    style: TextStyle(
+                                        fontWeight: unread
+                                            ? FontWeight.w700
+                                            : FontWeight.w400)),
+                                subtitle: Text(when('${n['createdAt'] ?? ''}')));
+                          })));
 }
 
 // ---------------------------------------------------------------- technician

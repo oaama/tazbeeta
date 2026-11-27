@@ -216,6 +216,13 @@ class Api {
     await _call('POST', '/api/feedback', {'stars': stars, 'note': note});
   }
 
+  static Future<List<dynamic>> notifications() async =>
+      (await _call('GET', '/api/notifications'))['notifications'] as List;
+
+  static Future<void> markNotificationsRead() async {
+    await _call('POST', '/api/notifications/read', {});
+  }
+
   static Future<List<dynamic>> services() async =>
       (await _call('GET', '/api/services'))['services'] as List;
   /// Admin-managed lists: positions (what technicians work in) and areas (where). Empty when the server has none.

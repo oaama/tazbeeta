@@ -861,6 +861,41 @@ class DemoBackend {
       if (q.isEmpty) return _ok({'error': 'Request not found'}, 404);
       return _v4(q, body);
     }
+    if (p == '/api/notifications' && r.method == 'GET') {
+      const t = {
+        'pending': ['Request received', 'استلمنا طلبك'],
+        'quoted': ['Your quote is ready. Review and accept it.', 'عرض السعر جاهز. راجعه ووافق عليه.'],
+        'assigned': ['A technician was assigned: Mostafa Ali', 'اتعيّن فني: مصطفى علي'],
+        'in_progress': ['Work started', 'الشغل بدأ'],
+        'completed': ['Work completed. Rate the technician.', 'الشغل خلص. قيّم الفني.'],
+        'cancelled': ['Request cancelled', 'الطلب اتلغى']
+      };
+      final out = <Map<String, dynamic>>[];
+      for (final q in _mine()) {
+        final e = t[q['status']];
+        if (e == null) continue;
+        out.add({
+          'id': 'n${q['id']}',
+          'text': e[0],
+          'textAr': e[1],
+          'requestId': q['id'],
+          'read': out.length > 1,
+          'createdAt': q['createdAt'] ?? DateTime.now().toUtc().toIso8601String()
+        });
+      }
+      for (final c in complaints.where((c) => c['customerId'] == me['id'] && '${c['reply'] ?? ''}'.isNotEmpty)) {
+        out.insert(0, {
+          'id': 'nc${c['id']}',
+          'text': 'The team replied to your message',
+          'textAr': 'الفريق رد على رسالتك',
+          'requestId': c['requestId'],
+          'read': false,
+          'createdAt': c['updatedAt'] ?? c['createdAt']
+        });
+      }
+      return _ok({'notifications': out, 'unread': out.where((n) => n['read'] != true).length});
+    }
+    if (p == '/api/notifications/read' && r.method == 'POST') return _ok({'ok': true});
     if (p == '/api/complaints' && r.method == 'GET')
       return _ok({
         'complaints':
