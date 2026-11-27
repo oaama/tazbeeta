@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [feature/company-ops]
-    paths: [".github/workflows/release.yml", "mobile/test/features_shots_test.dart"]
+    paths: [".github/workflows/release.yml", "mobile/test/features_shots_test.dart", "mobile/android/app/build.gradle.kts"]
 permissions:
   contents: read
 jobs:
