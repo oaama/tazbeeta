@@ -1,6 +1,9 @@
 name: Release build (APK + AAB)
 on:
   workflow_dispatch:
+  push:
+    branches: [feature/company-ops]
+    paths: [".github/workflows/release.yml"]
 permissions:
   contents: read
 jobs:
