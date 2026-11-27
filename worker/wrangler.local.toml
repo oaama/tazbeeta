@@ -1,0 +1,12 @@
+name = "tzb-local"
+main = "/home/sandbox/tazbeeta/worker/worker.mjs"
+compatibility_date = "2025-01-01"
+[[d1_databases]]
+binding = "DB"
+database_name = "local"
+database_id = "00000000-0000-0000-0000-000000000000"
+[vars]
+ADMIN_EMAIL = "admin@test.local"
+PBKDF2_ITER = "1000"
+JWT_SECRET = "local-test-secret-local-test-secret-1234"
+BOT_KEY = "botkey"
